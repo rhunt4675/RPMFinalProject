@@ -88,11 +88,11 @@ function getFrontierCells() {
 	var idx = 0
 	while(idx < size(locs)) {
 		idx = idx + 1
-		searchAndRecurse(locs[idx].x, locs[idx].y)
+		dfsSearch(locs[idx].x, locs[idx].y)
 	}
 }
 
-function searchAndRecurse(x, y) {
+function dfsSearch(x, y) {
 	# Check if Cell Has Been Checked
 	var code = encodeXY(x,y)
 	if (marked[code] != nil)
@@ -115,16 +115,16 @@ function searchAndRecurse(x, y) {
 
 	# Check For Explored Neighbors
 	if (x > 0) { if (g_map[x-1][y] == 1) {
-		searchAndRecurse(x-1, y, map)
+		dfsSearch(x-1, y, map)
 	}}
 	if (y > 0) { if (g_map[x][y-1] == 1) {
-		searchAndRecurse(x, y-1, map)
+		dfsSearch(x, y-1, map)
 	}}
 	if (x < MAPSIZE-1) { if (g_map[x+1][y] == 1) {
-		searchAndRecurse(x+1, y, map)
+		dfsSearch(x+1, y, map)
 	}}
 	if (y < MAPSIZE-1) { if (g_map[x][y+1] == 1) {
-		searchAndRecurse(x, y+1, map)
+		dfsSearch(x, y+1, map)
 	}}
 }
 
@@ -140,11 +140,19 @@ function getTravelCost() {
 		# Perform DP Search
 		dpSearch(pos.x, pos.y)
 
-		# Copy Frontier Values to 'cost'
+		# Copy Frontier & Map Values to 'cost'
 		cost[idx] = {}
+		foreach(g_map, function(key, value) {
+			foreach(value, function(key2, value2) {
+				if (value2 == 1) {
+					cost[idx][encodeXY(key,key2)] = vi[key][key2]
+				}
+			})
+		})
 		foreach(frontier, function(key, value) {
 			cost[idx][key] = vi[decodeX(key)][decodeY(key)]
 		})
+		
 		idx = idx + 1
 	}
 }
@@ -169,6 +177,46 @@ function dpSearch(x, y) {
 		vi[x][y+1] = score
 		dpSearch(x, y+1)
 	}}}
+}
+
+function gradientDescentSearch(step, robotIdx, curIdx, goalIdx, cost) {
+	# Recursion Base Case
+	if (curIdx == goalIdx)
+		return
+
+	if (step > 10) {
+		log("FAIL!!!! (step>",step,")")
+		outlineBlocks()
+		halt()
+	}
+
+	# Store Path
+	var x = decodeX(curIdx)
+	var y = decodeY(curIdx)
+	subgoals[robotIdx][step] = curIdx
+
+	# Find Best Direction
+	var minIdx = -1
+	var minVal = INFINITY
+	if (x > 0) { if (cost[robotIdx][encodeXY(x-1,y)] != nil and cost[robotIdx][encodeXY(x-1,y)] < minVal) {
+		minVal = cost[robotIdx][encodeXY(x-1,y)]
+		minIdx = encodeXY(x-1,y)
+	}}
+	if (y > 0) { if (cost[robotIdx][encodeXY(x,y-1)] != nil and cost[robotIdx][encodeXY(x,y-1)] < minVal) {
+		minVal = cost[robotIdx][encodeXY(x,y-1)]
+		minIdx = encodeXY(x,y-1)
+	}}
+	if (x < MAPSIZE-1) { if (cost[robotIdx][encodeXY(x+1,y)] != nil and cost[robotIdx][encodeXY(x+1,y)] < minVal) {
+		minVal = cost[robotIdx][encodeXY(x+1,y)]
+		minIdx = encodeXY(x+1,y)
+	}}
+	if (y < MAPSIZE-1) { if (cost[robotIdx][encodeXY(x,y+1)] != nil and cost[robotIdx][encodeXY(x,y+1)] < minVal) {
+		minVal = cost[robotIdx][encodeXY(x,y+1)]
+		minIdx = encodeXY(x,y+1)
+	}}
+
+	# Recurse
+	gradientDescentSearch(step+1, robotIdx, minIdx, goalIdx, cost)
 }
 
 function outlineBlocks() {
@@ -208,6 +256,21 @@ function outlineBlocks() {
 				(xC + offset) / SENSORSCALE - SP, (yC + offset) / SENSORSCALE - SP, 0.0)
 		}
 	})
+
+	color = {.r = 255, .g = 0, .b = 0}
+	foreach(frontier, function(key, value) {
+		var xC = getWorldCoordinate(decodeX(key)) ^ 1
+		var yC = getWorldCoordinate(decodeY(key)) ^ 1
+
+		debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC - offset) / SENSORSCALE + SP, 0.0,
+			(xC - offset) / SENSORSCALE + SP, (yC + offset) / SENSORSCALE - SP, 0.0)
+		debug.rays.add(color.r, color.g, color.b, (xC + offset) / SENSORSCALE - SP, (yC - offset) / SENSORSCALE + SP, 0.0, 
+			(xC + offset) / SENSORSCALE - SP, (yC + offset) / SENSORSCALE - SP, 0.0)
+		debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC - offset) / SENSORSCALE + SP, 0.0, 
+			(xC + offset) / SENSORSCALE - SP, (yC - offset) / SENSORSCALE + SP, 0.0)
+		debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC + offset) / SENSORSCALE - SP, 0.0, 
+			(xC + offset) / SENSORSCALE - SP, (yC + offset) / SENSORSCALE - SP, 0.0)
+	})
 }
 
 #################################################
@@ -216,7 +279,6 @@ function outlineBlocks() {
 
 # Executed at init time
 function init() {
-	reset()
 	myswarm = swarm.create(1)
 	myswarm.join()
 
@@ -224,11 +286,13 @@ function init() {
 	if (id == 0) {
 		g_map = table2D(MAPSIZE, MAPSIZE, 0)
 		goals = table1D(ROBOTS, -1)
+		subgoals = table2D(ROBOTS, 0, -1)
 		unassignedCount = ROBOTS - 1
+		frontier = {}
 	}
 
 	# Setup Debug Options
-	debug.trajectory.enable(10000)
+	debug.trajectory.enable(100)
 }
 
 # Executed every time step
@@ -256,12 +320,28 @@ function step() {
 			if (xPos >= 0 and yPos >= 0 and xPos < MAPSIZE and yPos < MAPSIZE) {	
 				g_map[xPos][yPos] = 1
 
-				# Handle Goal Reached
-				if (encodeXY(xPos, yPos) == goals[robot]) {
-					log("Robot (id=",robot,") reached goal (id=",goals[robot],")")
-					goals[robot] = -1
-					unassignedCount = unassignedCount + 1
+				# Handle Subgoal Reached
+				if (encodeXY(xPos, yPos) == subgoals[robot][size(subgoals[robot])-1]) {
+					subgoals[robot][size(subgoals[robot])-1] = nil
+
+					# Handle Goal Reached
+					if (encodeXY(xPos, yPos) == goals[robot]) {
+						log("Robot (id=",robot,") reached goal (id=",goals[robot],")")
+						goals[robot] = -1
+						subgoals[robot] = {}
+						unassignedCount = unassignedCount + 1
+					}
 				}
+
+				# Handle Other Robot's Goal Reached
+				foreach(goals, function(key, value) {
+					if (encodeXY(xPos, yPos) == goals[key]) {
+						log("FRIENDLYFIRE!!!")
+						goals[key] = -1
+						subgoals[key] = {}
+						unassignedCount = unassignedCount + 1
+					}
+				})
 			}
 
 			# Store Position in Simple Table
@@ -291,49 +371,59 @@ function step() {
 				idx = idx + 1
 			}
 
-			# Match Robots to Frontier Cells
+			# Match 1 Robot to a Frontier Cell
 			idx = 0
-			while(idx < unassignedCount) {
-				maxUtil = -INFINITY
-				robotIdx = -1
-				frontierIdx = -1
+			maxUtil = -INFINITY
+			robotIdx = -1
+			frontierIdx = -1
 
-				# Iterate Through All Robots
-				var iter = 1
-				while(iter < ROBOTS) {
-				
-					# Iterate Through All Frontier Cells
-					foreach(frontier, function(key, value) {
-						var lag = (ALPHA * value) - (BETA * cost[iter][key])
+			# Iterate Through All Robots
+			var iter = 1
+			while(iter < ROBOTS) {
 
-						# Save Optimal Choice
-						if (lag > maxUtil and goals[iter] == -1) {
-							maxUtil = lag
-							robotIdx = iter
-							frontierIdx = key
-						}
-					})
-					iter = iter + 1
-				}
+				# Iterate Through All Frontier Cells
+				foreach(frontier, function(k, v) {
+					var lag = (ALPHA * v) - (BETA * cost[iter][k])
 
-				log("Robot (id=",robotIdx,") starting goal (id=",frontierIdx,")")
-				goals[robotIdx] = frontierIdx
-				frontier[frontierIdx] = nil
-				unassignedCount = unassignedCount - 1
-				idx = idx + 1
+					# Save Optimal Choice
+					if (lag > maxUtil and goals[iter] == -1) {
+						maxUtil = lag
+						robotIdx = iter
+						frontierIdx = k
+					}
+				})
+				iter = iter + 1
 			}
+
+			# Derive Plan from Steepest Gradient Descent
+			if (robotIdx != -1) {
+				log("Robot (id=",robotIdx,") starting goal (id=",frontierIdx,")")
+				subgoals[robotIdx] = {}
+				var curIdx = encodeXY(locs[robotIdx].x, locs[robotIdx].y)
+				gradientDescentSearch(0, robotIdx, frontierIdx, curIdx, cost)
+			}
+
+			# Finalize Decision
+			goals[robotIdx] = frontierIdx
+			frontier[frontierIdx] = nil
+			unassignedCount = unassignedCount - 1
+			idx = idx + 1
 		}
 	
 		# Send Commands to Each Robot
 		idx = 1
 		while(idx < ROBOTS) {
-			var dX = getWorldCoordinate(decodeX(goals[idx])) - neighbor_locs.data[idx].x
-			var dY = getWorldCoordinate(decodeY(goals[idx])) - neighbor_locs.data[idx].y
+			var goal = subgoals[idx][size(subgoals[idx])-1]
+			if (goal != nil) {
+				var dX = getWorldCoordinate(decodeX(goal)) - neighbor_locs.data[idx].x
+				var dY = getWorldCoordinate(decodeY(goal)) - neighbor_locs.data[idx].y
 
-			var target = {.x = dX, .y = dY, .goal = goals[idx]}
-			neighbors.broadcast(string.tostring(idx), target)
+				var target = {.x = dX, .y = dY, .goal = goals[idx]}
+				neighbors.broadcast(string.tostring(idx), target)
+			}
 			idx = idx + 1
 		}
+		debug.print("(controller)")
 	}
 
 	# Slaves Read From Instruction Queue
@@ -341,7 +431,7 @@ function step() {
 		neighbors.listen(string.tostring(id),
 			function(vid, value, rid) {
 				goto(value.x, value.y)
-				debug.print(value.goal)
+				debug.print("(",decodeX(value.goal),",",decodeY(value.goal),")")
 			}
 		)
 	}
